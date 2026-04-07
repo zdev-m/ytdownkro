@@ -1,29 +1,40 @@
-exports.handler = async (event, context) => {
-  const { url } = event.queryStringParameters;
+// netlify/functions/download.js
+const ytdl = require('ytdl-core');
+
+exports.handler = async (event) => {
+  // 1. URL query parameter se video link lo
+  const videoUrl = event.queryStringParameters.url;
   
-  if (!url) {
+  if (!videoUrl) {
     return {
       statusCode: 400,
-      body: JSON.stringify({ error: 'URL required' })
+      body: JSON.stringify({ error: 'No URL provided' })
+    };
+  }
+
+  // 2. Validate YouTube URL
+  if (!ytdl.validateURL(videoUrl)) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: 'Invalid YouTube URL' })
     };
   }
 
   try {
-    // YouTube se video info nikaalne ke liye
-    const videoId = extractVideoId(url);
-    const info = await getVideoInfo(videoId);
+    // 3. Video info fetch karo
+    const info = await ytdl.getInfo(videoUrl);
     
+    // 4. Sabse high quality video format chuno (with both video+audio)
+    const format = ytdl.chooseFormat(info.formats, { quality: 'highest' });
+    
+    // 5. Download URL return karo (Netlify direct video return nahi kar sakta, isliye sirf link)
     return {
       statusCode: 200,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      },
       body: JSON.stringify({
-        title: info.title,
-        author: info.author,
-        thumbnail: info.thumbnail,
-        downloadUrl: info.formats[0].url
+        success: true,
+        title: info.videoDetails.title,
+        downloadUrl: format.url,
+        thumbnail: info.videoDetails.thumbnails[0].url
       })
     };
   } catch (error) {
@@ -33,22 +44,3 @@ exports.handler = async (event, context) => {
     };
   }
 };
-
-function extractVideoId(url) {
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-  const match = url.match(regExp);
-  return (match && match[2].length === 11) ? match[2] : null;
-}
-
-async function getVideoInfo(videoId) {
-  // Simple fetch from YouTube oEmbed (basic info)
-  const response = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
-  const data = await response.json();
-  
-  return {
-    title: data.title,
-    author: data.author_name,
-    thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-    formats: [{ url: `https://www.youtube.com/watch?v=${videoId}` }]
-  };
-}
