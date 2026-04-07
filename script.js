@@ -1,138 +1,182 @@
-// Netlify Backend URL
-const API_URL = '/api/download';
+let currentVideoUrl = '';
+let selectedFormat = '720p';
+let currentMode = 'video';
 
-// State
-let currentVideoInfo = null;
-
-// DOM Elements
-const inputSection = document.getElementById('inputSection');
-const loadingSection = document.getElementById('loadingSection');
-const videoInfo = document.getElementById('videoInfo');
-const successMessage = document.getElementById('successMessage');
-
-// Paste URL
-async function pasteUrl() {
-  try {
-    const text = await navigator.clipboard.readText();
-    document.getElementById('videoUrl').value = text;
-    showToast('URL pasted!');
-  } catch (err) {
-    showToast('Paste manually');
-  }
-}
-
-// Analyze Video
+// Analyze video
 async function analyzeVideo() {
-  const url = document.getElementById('videoUrl').value.trim();
+  const urlInput = document.getElementById('videoUrl');
+  const url = urlInput.value.trim();
   
-  if (!url || !isValidYouTubeUrl(url)) {
-    showToast('Valid YouTube URL dalen');
+  if (!url) {
+    showToast('Please enter a YouTube URL', 'error');
     return;
   }
-
-  // Show loading
-  inputSection.style.display = 'none';
-  loadingSection.style.display = 'block';
-
+  
+  if (!url.includes('youtube.com/') && !url.includes('youtu.be/')) {
+    showToast('Please enter a valid YouTube URL', 'error');
+    return;
+  }
+  
+  currentVideoUrl = url;
+  
+  // Hide input section, show loading
+  document.getElementById('inputSection').style.display = 'none';
+  document.getElementById('loadingSection').style.display = 'block';
+  
   try {
-    // Call Netlify Function
-    const response = await fetch(`${API_URL}?url=${encodeURIComponent(url)}`);
+    const response = await fetch('/.netlify/functions/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: currentVideoUrl, action: 'analyze' })
+    });
     
-    if (!response.ok) {
-      throw new Error('Failed to fetch');
-    }
-
     const data = await response.json();
-    currentVideoInfo = data;
     
-    // Display info
-    displayVideoInfo(data);
-    
-    loadingSection.style.display = 'none';
-    videoInfo.style.display = 'block';
-
+    if (data.success) {
+      document.getElementById('videoTitle').textContent = data.title;
+      document.getElementById('videoAuthor').textContent = data.author;
+      document.getElementById('videoThumbnail').src = data.thumbnail;
+      document.getElementById('viewCount').textContent = parseInt(data.views).toLocaleString();
+      document.getElementById('durationBadge').textContent = data.duration;
+      
+      document.getElementById('loadingSection').style.display = 'none';
+      document.getElementById('videoInfo').style.display = 'block';
+    } else {
+      throw new Error(data.error);
+    }
   } catch (error) {
-    console.error('Error:', error);
-    showToast('Error! Try again.');
-    loadingSection.style.display = 'none';
-    inputSection.style.display = 'block';
+    showToast(error.message, 'error');
+    resetApp();
   }
 }
 
-// Validate URL
-function isValidYouTubeUrl(url) {
-  return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/.test(url);
-}
-
-// Display Video Info
-function displayVideoInfo(data) {
-  document.getElementById('videoThumbnail').src = data.thumbnail;
-  document.getElementById('videoTitle').textContent = data.title;
-  document.getElementById('videoAuthor').textContent = data.author;
-  document.getElementById('durationBadge').textContent = '00:00';
-  document.getElementById('viewCount').textContent = '0';
-  document.getElementById('uploadDate').textContent = 'Recently';
-}
-
-// Tab switch
-function switchTab(tab) {
-  const videoBtn = document.querySelectorAll('.tab-btn')[0];
-  const audioBtn = document.querySelectorAll('.tab-btn')[1];
+// Start download
+async function startDownload() {
+  const downloadBtn = document.querySelector('.download-btn');
+  const progressDiv = document.getElementById('downloadProgress');
+  const percentSpan = document.getElementById('downloadPercent');
   
-  if (tab === 'video') {
-    videoBtn.classList.add('active');
-    audioBtn.classList.remove('active');
-    document.getElementById('videoFormats').style.display = 'grid';
-    document.getElementById('audioFormats').style.display = 'none';
-  } else {
-    videoBtn.classList.remove('active');
-    audioBtn.classList.add('active');
-    document.getElementById('videoFormats').style.display = 'none';
-    document.getElementById('audioFormats').style.display = 'grid';
+  downloadBtn.disabled = true;
+  progressDiv.style.display = 'flex';
+  percentSpan.style.display = 'inline';
+  
+  // Simulate progress
+  let progress = 0;
+  const interval = setInterval(() => {
+    progress += 10;
+    document.getElementById('downloadProgressFill').style.width = progress + '%';
+    percentSpan.textContent = progress + '%';
+    if (progress >= 90) clearInterval(interval);
+  }, 200);
+  
+  try {
+    const response = await fetch('/.netlify/functions/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        url: currentVideoUrl, 
+        format: selectedFormat,
+        action: 'download'
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      clearInterval(interval);
+      document.getElementById('downloadProgressFill').style.width = '100%';
+      percentSpan.textContent = '100%';
+      
+      // Trigger actual download
+      const a = document.createElement('a');
+      a.href = data.downloadUrl;
+      a.download = data.title + (currentMode === 'audio' ? '.mp3' : '.mp4');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      setTimeout(() => {
+        document.getElementById('videoInfo').style.display = 'none';
+        document.getElementById('successMessage').style.display = 'block';
+      }, 500);
+    } else {
+      throw new Error(data.error);
+    }
+  } catch (error) {
+    clearInterval(interval);
+    showToast(error.message, 'error');
+    resetApp();
+  } finally {
+    downloadBtn.disabled = false;
+    setTimeout(() => {
+      progressDiv.style.display = 'none';
+      percentSpan.style.display = 'none';
+      document.getElementById('downloadProgressFill').style.width = '0%';
+    }, 1000);
   }
 }
 
 // Select format
 function selectFormat(element, format) {
-  document.querySelectorAll('.format-card').forEach(c => c.classList.remove('selected'));
+  document.querySelectorAll('.format-card').forEach(card => {
+    card.classList.remove('selected');
+  });
   element.classList.add('selected');
+  selectedFormat = format;
 }
 
-// Download
-async function startDownload() {
-  if (!currentVideoInfo || !currentVideoInfo.downloadUrl) {
-    showToast('No download link available');
-    return;
-  }
+// Switch between video/audio tabs
+function switchTab(type) {
+  currentMode = type;
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
   
-  // Open download in new tab
-  window.open(currentVideoInfo.downloadUrl, '_blank');
-  showSuccess();
+  if (type === 'video') {
+    document.getElementById('videoFormats').style.display = 'grid';
+    document.getElementById('audioFormats').style.display = 'none';
+    selectedFormat = '720p';
+    document.querySelector('#videoFormats .format-card').classList.add('selected');
+  } else {
+    document.getElementById('videoFormats').style.display = 'none';
+    document.getElementById('audioFormats').style.display = 'grid';
+    selectedFormat = 'mp3-320';
+    document.querySelector('#audioFormats .format-card').classList.add('selected');
+  }
 }
 
-// Show success
-function showSuccess() {
-  videoInfo.style.display = 'none';
-  successMessage.style.display = 'block';
+// Paste from clipboard
+async function pasteUrl() {
+  try {
+    const text = await navigator.clipboard.readText();
+    document.getElementById('videoUrl').value = text;
+    showToast('URL pasted successfully!', 'success');
+  } catch (err) {
+    showToast('Could not paste. Please enter manually.', 'error');
+  }
 }
 
-// Reset
+// Reset app
 function resetApp() {
+  document.getElementById('successMessage').style.display = 'none';
+  document.getElementById('videoInfo').style.display = 'none';
+  document.getElementById('inputSection').style.display = 'block';
   document.getElementById('videoUrl').value = '';
-  successMessage.style.display = 'none';
-  inputSection.style.display = 'block';
-  currentVideoInfo = null;
+  currentVideoUrl = '';
 }
 
-// Toast
-function showToast(msg) {
+// Show toast notification
+function showToast(message, type) {
   const toast = document.getElementById('toast');
-  document.getElementById('toastMessage').textContent = msg;
+  const toastMessage = document.getElementById('toastMessage');
+  toastMessage.textContent = message;
   toast.classList.add('show');
-  setTimeout(() => toast.classList.remove('show'), 3000);
+  if (type === 'error') {
+    toast.style.background = '#dc2626';
+  } else {
+    toast.style.background = '#10b981';
+  }
+  setTimeout(() => {
+    toast.classList.remove('show');
+    toast.style.background = '#1f2937';
+  }, 3000);
 }
-
-// Enter key
-document.getElementById('videoUrl').addEventListener('keypress', (e) => {
-  if (e.key === 'Enter') analyzeVideo();
-});
