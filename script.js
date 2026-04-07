@@ -1,5 +1,5 @@
 let currentVideoUrl = '';
-let selectedFormat = '720p';
+let selectedQuality = '720p';
 let currentMode = 'video';
 
 // Analyze video
@@ -12,14 +12,8 @@ async function analyzeVideo() {
     return;
   }
   
-  if (!url.includes('youtube.com/') && !url.includes('youtu.be/')) {
-    showToast('Please enter a valid YouTube URL', 'error');
-    return;
-  }
-  
   currentVideoUrl = url;
   
-  // Hide input section, show loading
   document.getElementById('inputSection').style.display = 'none';
   document.getElementById('loadingSection').style.display = 'block';
   
@@ -60,23 +54,24 @@ async function startDownload() {
   progressDiv.style.display = 'flex';
   percentSpan.style.display = 'inline';
   
-  // Simulate progress
   let progress = 0;
   const interval = setInterval(() => {
-    progress += 10;
+    progress += 5;
     document.getElementById('downloadProgressFill').style.width = progress + '%';
     percentSpan.textContent = progress + '%';
     if (progress >= 90) clearInterval(interval);
-  }, 200);
+  }, 300);
   
   try {
+    const quality = currentMode === 'audio' ? 'audio' : selectedQuality;
+    
     const response = await fetch('/.netlify/functions/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         url: currentVideoUrl, 
-        format: selectedFormat,
-        action: 'download'
+        action: 'download',
+        quality: quality
       })
     });
     
@@ -87,13 +82,21 @@ async function startDownload() {
       document.getElementById('downloadProgressFill').style.width = '100%';
       percentSpan.textContent = '100%';
       
-      // Trigger actual download
+      // Convert base64 to blob and download
+      const binaryString = atob(data.data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: currentMode === 'audio' ? 'audio/mpeg' : 'video/mp4' });
+      const downloadUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = data.downloadUrl;
-      a.download = data.title + (currentMode === 'audio' ? '.mp3' : '.mp4');
+      a.href = downloadUrl;
+      a.download = `${data.title}.${currentMode === 'audio' ? 'mp3' : 'mp4'}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
       
       setTimeout(() => {
         document.getElementById('videoInfo').style.display = 'none';
@@ -104,7 +107,7 @@ async function startDownload() {
     }
   } catch (error) {
     clearInterval(interval);
-    showToast(error.message, 'error');
+    showToast('Download failed: ' + error.message, 'error');
     resetApp();
   } finally {
     downloadBtn.disabled = false;
@@ -116,16 +119,16 @@ async function startDownload() {
   }
 }
 
-// Select format
-function selectFormat(element, format) {
+// Select quality
+function selectFormat(element, quality) {
   document.querySelectorAll('.format-card').forEach(card => {
     card.classList.remove('selected');
   });
   element.classList.add('selected');
-  selectedFormat = format;
+  selectedQuality = quality;
 }
 
-// Switch between video/audio tabs
+// Switch tabs
 function switchTab(type) {
   currentMode = type;
   document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -134,24 +137,24 @@ function switchTab(type) {
   if (type === 'video') {
     document.getElementById('videoFormats').style.display = 'grid';
     document.getElementById('audioFormats').style.display = 'none';
-    selectedFormat = '720p';
+    selectedQuality = '720p';
     document.querySelector('#videoFormats .format-card').classList.add('selected');
   } else {
     document.getElementById('videoFormats').style.display = 'none';
     document.getElementById('audioFormats').style.display = 'grid';
-    selectedFormat = 'mp3-320';
+    selectedQuality = 'audio';
     document.querySelector('#audioFormats .format-card').classList.add('selected');
   }
 }
 
-// Paste from clipboard
+// Paste URL
 async function pasteUrl() {
   try {
     const text = await navigator.clipboard.readText();
     document.getElementById('videoUrl').value = text;
-    showToast('URL pasted successfully!', 'success');
+    showToast('URL pasted!', 'success');
   } catch (err) {
-    showToast('Could not paste. Please enter manually.', 'error');
+    showToast('Could not paste', 'error');
   }
 }
 
@@ -164,17 +167,13 @@ function resetApp() {
   currentVideoUrl = '';
 }
 
-// Show toast notification
+// Show toast
 function showToast(message, type) {
   const toast = document.getElementById('toast');
   const toastMessage = document.getElementById('toastMessage');
   toastMessage.textContent = message;
   toast.classList.add('show');
-  if (type === 'error') {
-    toast.style.background = '#dc2626';
-  } else {
-    toast.style.background = '#10b981';
-  }
+  toast.style.background = type === 'error' ? '#dc2626' : '#10b981';
   setTimeout(() => {
     toast.classList.remove('show');
     toast.style.background = '#1f2937';
