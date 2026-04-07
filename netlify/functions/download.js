@@ -1,46 +1,28 @@
-// netlify/functions/download.js
 const ytdl = require('ytdl-core');
 
 exports.handler = async (event) => {
-  // 1. URL query parameter se video link lo
   const videoUrl = event.queryStringParameters.url;
-  
-  if (!videoUrl) {
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ error: 'No URL provided' })
-    };
-  }
 
-  // 2. Validate YouTube URL
-  if (!ytdl.validateURL(videoUrl)) {
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ error: 'Invalid YouTube URL' })
-    };
+  if (!videoUrl || !ytdl.validateURL(videoUrl)) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid URL' }) };
   }
 
   try {
-    // 3. Video info fetch karo
-    const info = await ytdl.getInfo(videoUrl);
-    
-    // 4. Sabse high quality video format chuno (with both video+audio)
-    const format = ytdl.chooseFormat(info.formats, { quality: 'highest' });
-    
-    // 5. Download URL return karo (Netlify direct video return nahi kar sakta, isliye sirf link)
+    // Video ko stream karo aur buffer mein store karo
+    const videoStream = ytdl(videoUrl, { quality: 'lowest' }); // chhoti quality
+    const chunks = [];
+    for await (const chunk of videoStream) chunks.push(chunk);
+    const videoBuffer = Buffer.concat(chunks);
+
+    // Base64 mein convert karo
+    const base64Video = videoBuffer.toString('base64');
+
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        success: true,
-        title: info.videoDetails.title,
-        downloadUrl: format.url,
-        thumbnail: info.videoDetails.thumbnails[0].url
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: true, data: base64Video, title: 'video.mp4' })
     };
   } catch (error) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: error.message })
-    };
+    return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
   }
 };
