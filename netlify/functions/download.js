@@ -1,60 +1,112 @@
 const ytdl = require('ytdl-core');
 
 exports.handler = async (event) => {
-  const { url, format } = JSON.parse(event.body);
-  
-  if (!url || !ytdl.validateURL(url)) {
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ error: 'Invalid YouTube URL' })
-    };
+  // Enable CORS
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS'
+  };
+
+  if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 204, headers, body: '' };
   }
 
   try {
-    if (event.path.includes('/analyze')) {
-      // Video info fetch karo
-      const info = await ytdl.getInfo(url);
+    const body = JSON.parse(event.body);
+    const videoUrl = body.url;
+    const action = body.action;
+    const quality = body.quality || '720p';
+
+    if (!videoUrl) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'No URL provided' })
+      };
+    }
+
+    // Validate YouTube URL
+    if (!ytdl.validateURL(videoUrl)) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Invalid YouTube URL' })
+      };
+    }
+
+    // Get video info
+    const info = await ytdl.getInfo(videoUrl);
+
+    if (action === 'analyze') {
+      // Return video information
+      const videoDetails = info.videoDetails;
       return {
         statusCode: 200,
+        headers,
         body: JSON.stringify({
           success: true,
-          title: info.videoDetails.title,
-          author: info.videoDetails.author.name,
-          thumbnail: info.videoDetails.thumbnails[0].url,
-          views: info.videoDetails.viewCount,
-          duration: formatDuration(info.videoDetails.lengthSeconds)
+          title: videoDetails.title,
+          author: videoDetails.author.name,
+          thumbnail: videoDetails.thumbnails[videoDetails.thumbnails.length - 1].url,
+          views: videoDetails.viewCount,
+          duration: formatDuration(videoDetails.lengthSeconds),
+          videoId: videoDetails.videoId
         })
       };
     } 
-    else {
-      // Download URL fetch karo
-      const qualityMap = {
-        '1080p': 'highest',
-        '720p': 'highest',
-        '480p': 'lowest',
-        '360p': 'lowest',
-        'mp3-320': 'audioonly',
-        'mp3-192': 'audioonly',
-        'mp3-128': 'audioonly'
-      };
+    else if (action === 'download') {
+      // Choose format based on quality
+      let formatOptions = { quality: 'highest' };
       
-      const quality = qualityMap[format] || 'highest';
-      const options = format.includes('mp3') ? { quality: 'lowestaudio' } : { quality };
-      const info = await ytdl.getInfo(url);
-      const videoFormat = ytdl.chooseFormat(info.formats, options);
+      if (quality === '1080p') formatOptions = { quality: 'highest' };
+      else if (quality === '720p') formatOptions = { quality: 'highest' };
+      else if (quality === '480p') formatOptions = { quality: 'lowest' };
+      else if (quality === '360p') formatOptions = { quality: 'lowest' };
+      else if (quality === 'audio') formatOptions = { quality: 'lowestaudio' };
+
+      const format = ytdl.chooseFormat(info.formats, formatOptions);
+      
+      // Get video stream as buffer
+      const stream = ytdl(videoUrl, formatOptions);
+      const chunks = [];
+      
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      
+      const buffer = Buffer.concat(chunks);
+      const base64 = buffer.toString('base64');
       
       return {
         statusCode: 200,
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
           success: true,
-          downloadUrl: videoFormat.url,
-          title: info.videoDetails.title
+          data: base64,
+          title: info.videoDetails.title,
+          size: buffer.length
         })
       };
     }
+    
+    return {
+      statusCode: 400,
+      headers,
+      body: JSON.stringify({ error: 'Invalid action' })
+    };
+    
   } catch (error) {
+    console.error('Error:', error);
     return {
       statusCode: 500,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify({ error: error.message })
     };
   }
